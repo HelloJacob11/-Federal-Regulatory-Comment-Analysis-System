@@ -24,7 +24,7 @@ if __name__ == "__main__":
         })
         
         print(f"comment Id: {comment_id}, comment length: {len(text)}")
-        time.sleep(1.5)
+        time.sleep(0.05)
     
     with open(OUTPUT_FILE,"w") as f:
         json.dump(result,f,indent=2,ensure_ascii=False)

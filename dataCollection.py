@@ -33,7 +33,7 @@ def fetch_comments(docket_ID, max_pages = 20):
         all_comments.extend(comments)
         print(f"Page {page} - {len(comments)} comments (Total: {len(all_comments)})")
         page += 1
-        time.sleep(1.5)
+        time.sleep(0.05)
     return all_comments
 
 def fetch_comments_details(commentsID):
