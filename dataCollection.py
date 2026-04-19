@@ -38,11 +38,44 @@ def fetch_comments(docket_ID, max_pages = 20):
         time.sleep(1.5)
     return all_comments
 
+def fetch_comments_details(commentsID):
+    try:
+        response = requests.get(
+            f"https://api.regulations.gov/v4/comments/{commentsID}",
+            params={
+                "api_key" : API_KEY
+            }
+        )
+        if response.status_code != 200:
+            print(f"Error {response.status_code} : {response.text}")
+            return ""
+        data = response.json()
+        return data.get(data.get("data",{}).get("attributes",{}).get("comment"),"")
+    except Exception as e:
+        print(f"    Exception for {commentsID} : {e}")
+        return ""
+
 
 if __name__ == "__main__":
-    print(f"Fetching comments for docget: {DOCKET_ID}")
+    print(f"Step 1: Fetching comments for docget: {DOCKET_ID}")
     comments = fetch_comments(DOCKET_ID, 20)
+
+    print(f"Step 2: Fetching comment details")
+    result = []
+    for comment in comments:
+        comment_id = comment["id"]
+        attrs = comment["attributes"]
+        text = fetch_comments_details(comment_id)
+
+        result.append({
+            "id" : comment_id,
+            "title" : attrs.get("title"),
+            "postedDate" : attrs.get("postedDate"),
+            "text" : text
+        })
+        time.sleep(1.5)
+
     with open(OUTPUT_FILE,"w") as f:
-        json.dump(comments,f,indent=2)
+        json.dump(comments,f,indent=2,ensure_ascii=False)
     
     print(f"\n\nDone. {len(comments)} comments save to {OUTPUT_FILE}")
