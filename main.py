@@ -6,6 +6,7 @@ OUTPUT_FILE = 'COMMENT_RAW.json'
 DOCKET_ID = 'FTC-2023-0007'
 
 if __name__ == "__main__":
+    
     print(f"Step 1: Fetching comments for docget: {DOCKET_ID}")
     comments = fetch_comments(DOCKET_ID, 20)
 
@@ -31,3 +32,13 @@ if __name__ == "__main__":
     
     
     print(f"\n\nDone. {len(comments)} comments save to {OUTPUT_FILE}")
+    
+    
+    """
+    data = json.load(open('COMMENT_RAW.json'))
+    has_text = [d for d in data if d.get('printtext','').strip()]
+    empty = [d for d in data if not d.get('printtext','').strip()]
+    print(f'total = {len(data)}')
+    print(f"Text O = {len(has_text)}")
+    print(f"Empty = {len(empty)}")
+    """
