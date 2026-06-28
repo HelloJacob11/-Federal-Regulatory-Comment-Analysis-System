@@ -1,19 +1,33 @@
 # Federal Regulatory Comment Analysis System
-This project builds an end-to-end pipeline for collecting, processing, and analyzing public comments submitted to U.S. federal regulatory agencies via the [Regulations.gov API](https://open.gsa.gov/api/regulationsgov/). The goal is to extract meaningful insights from large volumes of public comments on regulatory dockets — identifying key themes, sentiment, and patterns in how the public responds to proposed rules. This system is designed to support policy researchers, journalists, and civic technologists who want to understand public opinion on federal regulations at scale.
+
+This project builds an end-to-end pipeline for collecting, processing, classifying, and analyzing public comments submitted to U.S. federal regulatory agencies through the [Regulations.gov API](https://open.gsa.gov/api/regulationsgov/). The system automatically retrieves every public comment for a given docket, cleans and preprocesses the text, classifies each comment's stance toward the proposed regulation (**Support**, **Oppose**, or **Neutral**), and prepares the data for downstream analyses such as topic modeling, duplicate detection, and visualization.
+
+The project is designed to support policy researchers, journalists, and civic technologists who want to understand public opinion on federal regulations at scale.
+
+**Note:** The FTC Non-Compete Rule docket (`FTC-2023-0007`) is currently used as a demonstration case to validate the pipeline. The system is designed to work with any public docket available through Regulations.gov.
+
 ---
-## Progress
+
+# Progress
+
+- [x] Retrieve docket information (title and abstract)
 - [x] Fetch all comment metadata for a given docket ID
 - [x] Fetch full comment text for each individual comment
 - [x] Save raw comment data to a local JSON file
 - [x] Clean and preprocess comment text
-- [x] Evaluate zero-shot classification models for stance detection
-- [ ] Test top models against real public comments from Regulations.gov
+- [x] Classify comments as **Support**, **Oppose**, or **Neutral**
+- [x] Aggregate predictions using ensemble majority voting
+- [x] Generate overall stance distribution for an entire docket
+- [ ] Validate predictions against manually labeled public comments
 - [ ] Perform topic modeling / theme extraction
-- [ ] Identify and flag mass comment campaigns (duplicate/near-duplicate comments)
+- [ ] Identify and flag mass comment campaigns (duplicate / near-duplicate comments)
 - [ ] Generate summary report of findings
 - [ ] Build visualization dashboard
+
 ---
-## Requirements
+
+# Requirements
+
 - Python 3.7+
 - `requests`
 - `python-dotenv`
@@ -21,165 +35,393 @@ This project builds an end-to-end pipeline for collecting, processing, and analy
 - `torch`
 
 Install dependencies:
+
 ```bash
 pip install requests python-dotenv transformers torch
 ```
+
 ---
-## Setup
-1. **Get a Regulations.gov API key** from [api.data.gov](https://api.data.gov/signup/). The `DEMO_KEY` can be used for testing but has very low rate limits.
-2. **Get a Hugging Face token** from [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens). Required to download gated models during evaluation.
-3. **Create a `.env` file** in the root of the project:
-```
+
+# Setup
+
+### 1. Get a Regulations.gov API key
+
+Obtain an API key from [api.data.gov](https://api.data.gov/signup/).
+
+The `DEMO_KEY` can be used for testing but has much stricter rate limits.
+
+### 2. Get a Hugging Face token
+
+Create an access token from:
+
+https://huggingface.co/settings/tokens
+
+This is required for downloading some Hugging Face models.
+
+### 3. Create a `.env` file
+
+Create a `.env` file in the project root:
+
+```text
 REGULATIONS_API_KEY=your_api_key_here
 HF_TOKEN=your_huggingface_token_here
 ```
-4. **Set your target docket** in `main.py`:
+
+### 4. Set the target docket
+
+In `main.py`:
+
 ```python
-DOCKET_ID = 'FTC-2023-0007'
+DOCKET_ID = "FTC-2023-0007"
 ```
-A docket ID is a unique identifier for a regulatory case file. It groups all related documents and public comments for a specific rulemaking. The format is typically `AGENCY-YEAR-NUMBER` (e.g. `FTC-2023-0007` refers to an FTC rulemaking from 2023).
+
+A docket ID uniquely identifies a federal rulemaking. The format is typically:
+
+```
+AGENCY-YEAR-NUMBER
+```
+
+For example,
+
+```
+FTC-2023-0007
+```
+
+refers to the FTC's 2023 Non-Compete Rulemaking.
+
 ---
-## Usage
-### Step 1 — Fetch comments
-Run the main script to collect raw comment data:
+
+# Usage
+
+## Step 1 — Fetch comments
+
+Run:
+
 ```bash
 python main.py
 ```
-The script runs in two phases:
 
-**Phase 1 — Fetch comment list:** Retrieves all comment metadata for the target docket, paginating through results 25 comments at a time.
+The script runs in two phases.
 
-**Phase 2 — Fetch comment details:** For each comment retrieved in Phase 1, makes an individual API call to fetch the full comment text and builds a structured result object containing the comment ID, title, posted date, and full text.
+### Phase 1 — Fetch comment metadata
 
-Example terminal output:
+Retrieves every comment associated with the specified docket, paginating through the Regulations.gov API 25 comments at a time.
+
+Example output:
+
 ```
 Step 1: Fetching comments for docket: FTC-2023-0007
+
 Page 1 - 25 comments (Total: 25)
 Page 2 - 25 comments (Total: 50)
 ...
-Step 2: Fetching comment details
-Done. 475 comments saved to COMMENT_RAW.json
 ```
 
-### Step 2 — Clean and preprocess
-Run the cleaning script to process raw comments into analysis-ready text:
+### Phase 2 — Fetch full comment text
+
+Each comment returned in Phase 1 only contains metadata. The script makes an additional API request for every comment to retrieve the full comment body.
+
+Each output record contains:
+
+- comment ID
+- title
+- posted date
+- full comment text
+
+Example:
+
+```
+Step 2: Fetching comment details
+
+0 comment:
+comment ID: FTC-XXXX-0001
+comment length: 2150
+
+...
+
+Done.
+475 comments saved to COMMENT_RAW.json
+```
+
+---
+
+## Step 2 — Clean and preprocess comments
+
+Run:
+
 ```bash
 python scrap.py
 ```
-This reads `COMMENT_RAW.json` and outputs `COMMENT_CLEAN.json`.
 
-Example terminal output:
+This script reads `COMMENT_RAW.json`, removes HTML and formatting artifacts, and writes the cleaned results to `COMMENT_CLEAN.json`.
+
+Example output:
+
 ```
-# of skipped_empty:  3
-# of data:  472
+# of skipped_empty: 3
+# of data: 472
 ```
 
-### Step 3 — Evaluate stance detection models
-Run the evaluation script to benchmark zero-shot classification models:
+---
+
+## Step 3 — Classify comment stance
+
+Run:
+
 ```bash
-python evaluate.py
+python classify.py
 ```
-This tests each candidate model against 10 hand-labeled sample comments, classifying each as **support**, **oppose**, or **neutral** toward the regulation. Each model's predictions are compared against the ground-truth labels and an accuracy score is printed.
 
-Example terminal output:
+*(Replace with your actual filename if different.)*
+
+The classifier performs the following steps:
+
+1. Loads the cleaned comments.
+2. Retrieves the docket title and abstract from Regulations.gov.
+3. Dynamically constructs three candidate labels:
+
 ```
-==================================================
-Model: facebook/bart-large-mnli
-==================================================
-O [1] answer:support | predicted:support (0.91)
-X [2] answer:support | predicted:neutral (0.45)
+This comment supports: <docket title> - <docket summary>
+
+This comment opposes: <docket title> - <docket summary>
+
+This comment is neutral regarding: <docket title> - <docket summary>
+```
+
+4. Loads five zero-shot Natural Language Inference (NLI) models.
+5. Each model independently predicts the comment stance.
+6. The final stance is selected using majority voting.
+7. If multiple labels receive the same number of votes, the tie is broken using the summed confidence scores.
+
+Example output:
+
+```
+Loading model: facebook/bart-large-mnli
+Loading model: cross-encoder/nli-deberta-v3-large
+Loading model: MoritzLaurer/DeBERTa-v3-large-mnli-fever-anli-ling-wanli
 ...
 
-Accuracy: 7/10 = 70%
+Total Comments Processed: 472
 
-==================================================
-Final Comparison
-==================================================
-80% - MoritzLaurer/DeBERTa-v3-large-mnli-fever-anli-ling-wanli
-80% - cross-encoder/nli-deberta-v3-large
-70% - facebook/bart-large-mnli
-...
+Stance Distribution:
+
+Support: 281
+Oppose: 165
+Neutral: 26
 ```
 
-#### Candidate models
+---
 
-The following five models were shortlisted for evaluation. All use a zero-shot classification approach where each comment is tested against the candidate labels via natural language inference (NLI).
+# Ensemble Models
+
+Rather than relying on a single classifier, this project uses an ensemble of five zero-shot Natural Language Inference (NLI) models.
+
+Each model independently classifies every comment as one of:
+
+- **Support**
+- **Oppose**
+- **Neutral**
+
+The final prediction is determined by majority vote.
+
+If multiple labels receive the same number of votes, the tie is resolved using the cumulative confidence scores from all models.
+
+---
+
+## Models Used
 
 | Model | Description |
-|---|---|
-| `facebook/bart-large-mnli` | BART-large fine-tuned on MNLI. Widely used default for zero-shot classification. |
-| `cross-encoder/nli-deberta-v3-large` | DeBERTa-v3-large fine-tuned on SNLI + MNLI. Strong NLI cross-encoder. |
-| `MoritzLaurer/DeBERTa-v3-large-mnli-fever-anli-ling-wanli` | DeBERTa-v3-large trained on multiple NLI datasets. Built for broad zero-shot coverage. |
-| `valhalla/distilbart-mnli-12-3` | Distilled BART model for faster inference with a smaller footprint. |
-| `FacebookAI/roberta-large-mnli` | RoBERTa-large fine-tuned on MNLI. Solid baseline encoder model. |
-
-#### Current findings
-
-All five models perform at a similar level on the 10-sample test set, with comparable accuracy and similar failure cases — they tend to get tripped up on the same comments (particularly neutral and indirectly worded opposition). The next step is to validate these results against real public comments fetched from Regulations.gov to see how they perform on noisier, real-world text.
+|------|-------------|
+| `facebook/bart-large-mnli` | BART-large fine-tuned on MNLI. A widely used baseline for zero-shot classification. |
+| `cross-encoder/nli-deberta-v3-large` | DeBERTa-v3-large trained on SNLI and MNLI. Strong NLI cross-encoder. |
+| `MoritzLaurer/DeBERTa-v3-large-mnli-fever-anli-ling-wanli` | DeBERTa-v3-large trained on multiple NLI datasets for broad zero-shot generalization. |
+| `valhalla/distilbart-mnli-12-3` | Distilled BART model with faster inference and smaller memory footprint. |
+| `FacebookAI/roberta-large-mnli` | RoBERTa-large fine-tuned on MNLI. Strong encoder-based baseline. |
 
 ---
-## How it works
-### `main.py`
-#### `fetch_comments(docket_id, max_pages)`
-Paginates through the `/v4/comments` endpoint filtering by docket ID. Retrieves up to `max_pages x 25` comments. Stops early if the API returns an empty page. Includes a 1.5 second delay between requests to respect rate limits.
-#### `fetch_comments_details(comment_id)`
-Makes an individual request to `/v4/comments/{commentId}` to retrieve the full text of a single comment. Returns the comment text string, or an empty string if the request fails or the comment has no text. Errors are caught and logged without stopping the overall pipeline.
-Note: Because Step 2 makes one API call per comment, large dockets with hundreds or thousands of comments will take significant time to process. For a docket with 500 comments, expect approximately 12-15 minutes of runtime due to the rate limit delay.
-### `scrap.py`
-#### `jsonLoad(inputFile, outputFile)`
-Loads the raw comment JSON, skips any empty/null entries, runs each comment's text through `cleanText()`, and writes the cleaned results to a new JSON file. Prints a summary of how many entries were skipped and how many were successfully processed.
-#### `cleanText(text)`
-Applies the following transformations in order:
-| Step | Regex | Effect |
-|---|---|---|
-| 1 | `<[^>]+>` | Strips HTML tags |
-| 2 | `\s+` | Collapses multiple whitespace into a single space |
-| 3 | `&#39;` | Converts numeric HTML entity to apostrophe (`'`) |
-| 4 | `&rsquo;` | Converts right single quotation mark entity to `"` |
-| 5 | `&amp;` | Converts ampersand entity to ` and` |
-| 6 | `&[a-zA-Z]+;` | Strips any remaining named HTML entities |
 
-### `evaluate.py`
-#### `evaluate_model(model_name)`
-Loads a zero-shot classification pipeline for the given model, runs it against 10 hand-labeled sample comments using the labels `["support", "oppose", "neutral"]`, and prints per-sample predictions alongside the ground truth. Returns the overall accuracy as a percentage. Input text is truncated to 512 tokens to stay within model limits. If a model fails to load, the error is logged and it returns 0%.
+# How It Works
+
+## `main.py`
+
+### `fetch_comments(docket_id, max_pages)`
+
+Retrieves comment metadata from the Regulations.gov `/comments` endpoint.
+
+- Filters by docket ID
+- Retrieves up to `max_pages × 25` comments
+- Automatically stops when no additional pages are returned
+- Waits 1.5 seconds between API requests to respect rate limits
+
 ---
-## Configuration
+
+### `fetch_comments_details(comment_id)`
+
+Retrieves the complete text for a single public comment using the `/comments/{commentId}` endpoint.
+
+Returns the comment text or an empty string if the request fails.
+
+---
+
+### `fetch_docket_info(docket_id)`
+
+Retrieves the docket title and abstract.
+
+These are later used to build context-aware zero-shot classification labels.
+
+---
+
+## `scrap.py`
+
+### `jsonLoad(inputFile, outputFile)`
+
+Loads the raw JSON file, removes empty entries, cleans each comment using `cleanText()`, and saves the processed comments.
+
+---
+
+### `cleanText(text)`
+
+Applies the following transformations:
+
+| Step | Regex | Purpose |
+|------|-------|---------|
+| 1 | `<[^>]+>` | Remove HTML tags |
+| 2 | `\s+` | Collapse repeated whitespace |
+| 3 | `&#39;` | Convert HTML apostrophe entity |
+| 4 | `&rsquo;` | Convert quotation entity |
+| 5 | `&amp;` | Convert ampersand entity |
+| 6 | `&[a-zA-Z]+;` | Remove remaining HTML entities |
+
+---
+
+## `classify.py`
+
+### `load_models()`
+
+Loads all five Hugging Face zero-shot classification models.
+
+---
+
+### `classify_stance(text, classifier)`
+
+For each comment:
+
+1. Truncates the input to 512 words.
+2. Runs inference across all five models.
+3. Records each model's prediction.
+4. Performs majority voting.
+5. Resolves ties using cumulative confidence scores.
+6. Returns:
+
+- predicted stance
+- vote counts
+- average confidence
+
+---
+
+# Configuration
+
 | Variable | Description | Default |
-|---|---|---|
-| `DOCKET_ID` | The regulations.gov docket ID to fetch comments for | `FTC-2023-0007` |
-| `OUTPUT_FILE` | Name of the raw output JSON file | `COMMENT_RAW.json` |
-| `max_pages` | Maximum number of pages to fetch (25 comments per page) | `20` |
-| `MODELS` | List of Hugging Face model IDs to evaluate | See `evaluate.py` |
-| `LABELS` | Stance labels used for classification | `["support", "oppose", "neutral"]` |
----
-## Output
-### `COMMENT_RAW.json`
-Raw comments saved as a JSON array. Each object contains:
-- `id` — unique comment ID
-- `title` — comment title
-- `postedDate` — date the comment was posted
-- `text` — full text of the comment (fetched individually via the details endpoint)
+|-----------|-------------|---------|
+| `DOCKET_ID` | Target Regulations.gov docket | `FTC-2023-0007` |
+| `OUTPUT_FILE` | Raw output JSON filename | `COMMENT_RAW.json` |
+| `max_pages` | Maximum number of pages to fetch | `20` |
+| `MODELS` | Ensemble of Hugging Face NLI models | See `classify.py` |
+| `LABELS` | Dynamically generated Support / Oppose / Neutral prompts based on the docket title and abstract | Generated automatically |
 
-Note: Some fields are agency-configurable and may not always be present. Fields like `email` and `phone` are never returned by the API for privacy reasons.
-### `COMMENT_CLEAN.json`
-Cleaned comments saved as a JSON array. Each object contains:
-- `id` — unique comment ID
-- `title` — comment title
-- `postedDate` — date the comment was posted
-- `cleaned_text` — preprocessed text with HTML tags, entities, and extra whitespace removed
 ---
-## Rate Limits
-The Regulations.gov API enforces rate limits. This script includes a 1.5 second delay between requests (`time.sleep(1.5)`) to avoid hitting the limit. With a real API key the limit is 1,000 requests per hour. The `DEMO_KEY` has much stricter limits and is not recommended for fetching large numbers of comments.
+
+# Output
+
+## `COMMENT_RAW.json`
+
+Contains the raw comments.
+
+Each object includes:
+
+- `id`
+- `title`
+- `postedDate`
+- `printtext`
+
 ---
-## Pagination Note
-The API returns a maximum of 5,000 records per query (250 per page × 20 pages). If a docket has more than 5,000 comments, additional pagination logic using `lastModifiedDate` as a cursor will be needed to retrieve all comments. See the [Regulations.gov API documentation](https://open.gsa.gov/api/regulationsgov/) for details.
+
+## `COMMENT_CLEAN.json`
+
+Contains cleaned comments.
+
+Each object includes:
+
+- `id`
+- `title`
+- `postedDate`
+- `cleaned_text`
+
 ---
-## Example Docket IDs
+
+## `COMMENT_CLASSIFIED.json`
+
+Contains the final stance predictions.
+
+Each object includes:
+
+- `id`
+- `title`
+- `postedDate`
+- `cleaned_text`
+- `stance`
+- `votes`
+- `avg_confidence`
+
+---
+
+# Rate Limits
+
+The Regulations.gov API enforces request limits.
+
+This project includes a 1.5-second delay between requests (`time.sleep(1.5)`) to reduce the likelihood of exceeding the limit.
+
+With a personal API key, the API currently allows approximately **1,000 requests per hour**.
+
+The `DEMO_KEY` has substantially lower limits and is not recommended for large-scale data collection.
+
+---
+
+# Pagination Note
+
+The Regulations.gov API limits individual queries to approximately **5,000 records**.
+
+If a docket exceeds this size, additional pagination logic (such as using `lastModifiedDate` as a cursor) will be required.
+
+See the official Regulations.gov API documentation for details.
+
+---
+
+# Example Docket IDs
+
 | Docket ID | Description |
-|---|---|
-| `FTC-2023-0007` | FTC rulemaking on non-compete clauses |
-| `EPA-HQ-OAR-2003-0129` | EPA air quality regulation |
-| `FAA-2018-1084` | FAA aviation regulation |
+|-----------|-------------|
+| `FTC-2023-0007` | FTC Non-Compete Rulemaking (demonstration case used in this project) |
+| `EPA-HQ-OAR-2003-0129` | EPA Air Quality Regulation |
+| `FAA-2018-1084` | FAA Aviation Regulation |
+
 ---
-## License
-This project uses the Regulations.gov public API. Data retrieved is U.S. government public domain data.
+
+# Future Work
+
+Planned extensions include:
+
+- BERTopic / LDA topic modeling
+- Duplicate and near-duplicate detection
+- Identification of mass comment campaigns
+- Named entity extraction
+- Automated summary report generation
+- Interactive visualization dashboard
+
+---
+
+# License
+
+This project uses the Regulations.gov public API.
+
+All data retrieved through the API are public-domain U.S. government records.

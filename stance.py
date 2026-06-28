@@ -4,11 +4,23 @@ from scraping import cleanText
 import os
 from dotenv import load_dotenv
 from collections import Counter
+from dataCollection import fetch_docket_info
 
 # Load environment variables
 load_dotenv()
 
 hf_token = os.getenv("HF_TOKEN")
+docker_iinfo = fetch_docket_info('FTC-2023-0007')
+LABELS = [
+    f"This comment supports: {docker_iinfo['title']} - {docker_iinfo['dkAbstract'][:200]}", 
+    f"This comment opposes: {docker_iinfo['title']} - {docker_iinfo['dkAbstract'][:200]}", 
+    f"This comment is neutral regarding: {docker_iinfo['title']} - {docker_iinfo['dkAbstract'][:200]}"
+]
+LABLE_SHORT = {
+    LABELS[0]: "Support",
+    LABELS[1]: "Oppose",
+    LABELS[2]: "Neutral"
+}
 
 MODELS = [
     "facebook/bart-large-mnli",
@@ -17,8 +29,6 @@ MODELS = [
     "valhalla/distilbart-mnli-12-3", 
     "FacebookAI/roberta-large-mnli",
 ]
-
-LABELS = ["support", "oppose", "neutral"]
 
 """classifier = pipeline(
     "zero-shot-classification",
@@ -70,14 +80,17 @@ def classify_stance(text,classifier):
         }
 
 
+
 if __name__ =='__main__':
     result = []
     data = json.load(open('COMMENT_CLEAN.json'))
     classifier = load_models()
     #text = "Pursuant to the Federal Trade Commission Act (‘‘FTC Act’’), the Federal Trade Commission (‘‘Commission’’) is issuing the Non-Compete Clause Rule (‘‘the final rule’’). The final rule provides that it is an unfair method of competition for persons to, among other things, enter into non-compete clauses (‘‘non-competes’’) with workers on or after the final rule’s effective date. With respect to existing non-competes—i.e., non-competes entered into before the effective date—the final rule adopts a different approach for senior executives than for other workers. For senior executives, existing non-competes can remain in force, while existing non-competes with other workers are not enforceable after the effective date. \n\n"
     #text = cleanText(text)
-    for d in data[:20]:
+    count_stance = Counter()
+    for d in data:
         stance_result = classify_stance(d['cleaned_text'],classifier)
+        print(f"Comment ID: {d['id']}...")  
         result.append({
             "id": d['id'],
             "title": d['title'],
@@ -87,9 +100,20 @@ if __name__ =='__main__':
             'avg_confidence': stance_result['avg_confidence'],
             'stance': stance_result['stance']
         })
-        print(f'Comment ID: {d["id"]}, Stance: {stance_result["stance"]}, Votes: {stance_result["votes"]}, Avg Confidence: {stance_result["avg_confidence"]}')
-    
-
+        short_votes = {}
+        for k, v in stance_result['votes'].items():
+            if 'support' in k:
+                short_votes['Support'] = v
+                count_stance['Support'] += v
+            elif 'oppose' in k:
+                short_votes['Oppose'] = v
+                count_stance['Oppose'] += v
+            elif 'neutral' in k:
+                short_votes['Neutral'] = v
+                count_stance['Neutral'] += v
+        #print(f'Votes: {short_votes}, Avg Confidence: {stance_result["avg_confidence"]}')
+    print(f'Total Comments Processed: {len(result)}')
+    print(f"Stance Distribution: {count_stance}")
 
 
                           

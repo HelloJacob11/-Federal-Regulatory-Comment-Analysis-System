@@ -54,3 +54,12 @@ def fetch_comments_details(commentsID):
         return ""
 
 
+def fetch_docket_info(docker_id):
+    response = requests.get(f"https://api.regulations.gov/v4/dockets/{docker_id}"
+                            ,params={"api_key": API_KEY})
+    data = response.json().get("data",{}).get("attributes",{})
+    print(f"Docket Info: {data}")
+    return {
+        'title': data.get('title', ''),
+        'dkAbstract': data.get('dkAbstract', '')
+    }
