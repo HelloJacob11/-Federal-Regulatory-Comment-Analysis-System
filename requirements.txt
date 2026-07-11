@@ -2,3 +2,8 @@ requests
 python-dotenv
 transformers
 torch
+uvicorn
+pydantic
+pymongo
+fastapi
+jinja2

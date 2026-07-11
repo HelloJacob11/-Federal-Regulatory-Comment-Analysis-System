@@ -1,12 +1,33 @@
-from dataCollection import fetch_comments,fetch_comments_details
+#from dataCollection import fetch_comments,fetch_comments_details
 import json
 import time
+from pathlib import Path
+from fastapi import FastAPI, Request
+from fastapi.templating import Jinja2Templates
+import uvicorn
+
+BASE_DIR = Path(__file__).resolve().parent          # app/
+templates = Jinja2Templates(directory=BASE_DIR.parent / "templates")   # project root/templates
+
+app = FastAPI()
+
+@app.get("/")
+def read_root(request: Request):
+    return templates.TemplateResponse(
+        request=request,
+        name="frontend.html",
+        context={}
+    )
+
+
 
 OUTPUT_FILE = 'COMMENT_RAW.json'
 DOCKET_ID = 'FTC-2023-0007'
 
 if __name__ == "__main__":
-    
+    uvicorn.run(app, host="0.0.0.0", port=8000)
+
+    '''
     print(f"Step 1: Fetching comments for docget: {DOCKET_ID}")
     comments = fetch_comments(DOCKET_ID, 20)
 
@@ -42,3 +63,5 @@ if __name__ == "__main__":
     print(f"Text O = {len(has_text)}")
     print(f"Empty = {len(empty)}")
     """
+    '''
+
