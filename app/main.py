@@ -3,26 +3,32 @@ import json
 import time
 from pathlib import Path
 from fastapi import FastAPI, Request
-from fastapi.templating import Jinja2Templates
+from fastapi.responses import FileResponse
 import uvicorn
+from backend.dataCollection import fetch_docket_info
 
 BASE_DIR = Path(__file__).resolve().parent          # app/
-templates = Jinja2Templates(directory=BASE_DIR.parent / "templates")   # project root/templates
 
 app = FastAPI()
 
 @app.get("/")
 def read_root(request: Request):
-    return templates.TemplateResponse(
-        request=request,
-        name="frontend.html",
-        context={}
-    )
-
+    return FileResponse(BASE_DIR / "templates" / "frontend.html")
 
 
 OUTPUT_FILE = 'COMMENT_RAW.json'
 DOCKET_ID = 'FTC-2023-0007'
+
+@app.get("/api/data")
+def get_data():
+    docket_info = fetch_docket_info(DOCKET_ID)
+    return {
+            'docket_id': DOCKET_ID,
+            'title' : docket_info.get('title', 'N/A'),
+            'dkAbstract' : docket_info.get('dkAbstract', 'N/A')
+        }
+    
+
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)

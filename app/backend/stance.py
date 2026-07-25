@@ -4,7 +4,7 @@ from scraping import cleanText
 import os
 from dotenv import load_dotenv
 from collections import Counter
-from dataCollection import fetch_docket_info
+from backend.dataCollection import fetch_docket_info
 
 # Load environment variables
 load_dotenv()
