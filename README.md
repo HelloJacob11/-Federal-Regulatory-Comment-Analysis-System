@@ -1,28 +1,57 @@
 # Federal Regulatory Comment Analysis System
 
-This project builds an end-to-end pipeline for collecting, processing, classifying, and analyzing public comments submitted to U.S. federal regulatory agencies through the [Regulations.gov API](https://open.gsa.gov/api/regulationsgov/). The system automatically retrieves every public comment for a given docket, cleans and preprocesses the text, classifies each comment's stance toward the proposed regulation (**Support**, **Oppose**, or **Neutral**), and prepares the data for downstream analyses such as topic modeling, duplicate detection, and visualization.
+This project builds an end-to-end pipeline for collecting, processing, classifying, and analyzing public comments submitted to U.S. federal regulatory agencies through the [Regulations.gov API](https://open.gsa.gov/api/regulationsgov/). The system retrieves public comments for a given docket, cleans and preprocesses the text, classifies each comment's stance toward the proposed regulation (**Support**, **Oppose**, or **Neutral**), and serves the results through a web dashboard.
 
 The project is designed to support policy researchers, journalists, and civic technologists who want to understand public opinion on federal regulations at scale.
 
-**Note:** The FTC Non-Compete Rule docket (`FTC-2023-0007`) is currently used as a demonstration case to validate the pipeline. The system is designed to work with any public docket available through Regulations.gov.
+**Note:** The FTC Non-Compete Rule docket (`FTC-2023-0007`) is used as the primary demonstration case, but the collection scripts also pull comments across a rotating batch of recently-modified dockets from any federal agency.
 
 ---
 
 # Progress
 
-- [x] Retrieve docket information (title and abstract)
+- [x] Retrieve docket information (title, abstract, last-modified date)
+- [x] Discover recently-modified dockets across agencies (`fetch_dockets_names`)
 - [x] Fetch all comment metadata for a given docket ID
 - [x] Fetch full comment text for each individual comment
-- [x] Save raw comment data to a local JSON file
+- [x] Save raw comment data to dated local JSON files and merge them into one file
 - [x] Clean and preprocess comment text
-- [x] Classify comments as **Support**, **Oppose**, or **Neutral**
+- [x] Classify comments as **Support**, **Oppose**, or **Neutral** using an ensemble of 5 zero-shot models
 - [x] Aggregate predictions using ensemble majority voting
-- [x] Generate overall stance distribution for an entire docket
-- [ ] Validate predictions against manually labeled public comments
+- [x] Generate overall stance distribution for a docket
+- [x] Small-scale manual accuracy check per model against 10 hand-labeled comments (`evaluate.py`)
+- [x] Serve a FastAPI backend (`main.py`) with an `/api/data` endpoint
+- [x] Build a web dashboard (Overview, Where People Stand, Read the Comments) wired to the API
+- [ ] Wire the dashboard to the real computed stance counts (currently serving placeholder values while the UI is being built out — see [Web Dashboard](#web-dashboard))
+- [ ] Validate predictions at scale against a larger manually-labeled sample
 - [ ] Perform topic modeling / theme extraction
 - [ ] Identify and flag mass comment campaigns (duplicate / near-duplicate comments)
 - [ ] Generate summary report of findings
-- [ ] Build visualization dashboard
+- [ ] Persist results in a database instead of local JSON files (`pymongo` is already a dependency)
+
+---
+
+# Project Structure
+
+```
+.
+├── README.md
+├── requirements.txt
+├── .env                        # API keys (not committed)
+└── app/
+    ├── main.py                 # FastAPI app: serves the dashboard + /api/data
+    ├── recentDocketIDs.json    # cache of recently-modified docket IDs
+    ├── COMMENT_RAW.json        # merged raw comments (all batches combined)
+    ├── COMMENT_RAW_*.json      # one file per collection run, dated
+    ├── COMMENT_CLEAN.json      # cleaned/preprocessed comments
+    ├── backend/
+    │   ├── dataCollection.py   # Regulations.gov API client + collection script
+    │   ├── scraping.py         # HTML/entity cleanup of raw comment text
+    │   ├── stance.py           # ensemble zero-shot stance classification
+    │   └── evaluate.py         # per-model accuracy check against labeled samples
+    └── templates/
+        └── frontend.html       # dashboard UI (see note below)
+```
 
 ---
 
@@ -33,11 +62,16 @@ The project is designed to support policy researchers, journalists, and civic te
 - `python-dotenv`
 - `transformers`
 - `torch`
+- `fastapi`
+- `uvicorn`
+- `pydantic`
+- `jinja2`
+- `pymongo`
 
 Install dependencies:
 
 ```bash
-pip install requests python-dotenv transformers torch
+pip install -r requirements.txt
 ```
 
 ---
@@ -67,148 +101,76 @@ REGULATIONS_API_KEY=your_api_key_here
 HF_TOKEN=your_huggingface_token_here
 ```
 
-### 4. Set the target docket
-
-In `main.py`:
-
-```python
-DOCKET_ID = "FTC-2023-0007"
-```
-
-A docket ID uniquely identifies a federal rulemaking. The format is typically:
-
-```
-AGENCY-YEAR-NUMBER
-```
-
-For example,
-
-```
-FTC-2023-0007
-```
-
-refers to the FTC's 2023 Non-Compete Rulemaking.
-
 ---
 
 # Usage
 
-## Step 1 — Fetch comments
+## Step 1 — Collect comments
 
-Run:
+From `app/`, run:
 
 ```bash
-python main.py
+python3 backend/dataCollection.py
 ```
 
-The script runs in two phases.
+This script has two phases:
 
-### Phase 1 — Fetch comment metadata
+1. **Discover dockets** — `fetch_dockets_names(count)` pulls the `count` most recently-modified dockets across all agencies and caches them to `recentDocketIDs.json`.
+2. **Fetch comments** — for a slice of those dockets (set in the `if __name__ == "__main__":` block, e.g. `dockets[120:132]`), it fetches comment metadata (`fetch_comments`) then the full text of each comment (`fetch_comments_details`), and writes the results to `COMMENT_RAW_<today's date>.json`.
 
-Retrieves every comment associated with the specified docket, paginating through the Regulations.gov API 25 comments at a time.
+Notes:
 
-Example output:
-
-```
-Step 1: Fetching comments for docket: FTC-2023-0007
-
-Page 1 - 25 comments (Total: 25)
-Page 2 - 25 comments (Total: 50)
-...
-```
-
-### Phase 2 — Fetch full comment text
-
-Each comment returned in Phase 1 only contains metadata. The script makes an additional API request for every comment to retrieve the full comment body.
-
-Each output record contains:
-
-- comment ID
-- title
-- posted date
-- full comment text
-
-Example:
-
-```
-Step 2: Fetching comment details
-
-0 comment:
-comment ID: FTC-XXXX-0001
-comment length: 2150
-
-...
-
-Done.
-475 comments saved to COMMENT_RAW.json
-```
-
----
+- The dockets fetched must stay within the count passed to `fetch_dockets_names` — e.g. slicing `dockets[120:132]` requires `fetch_dockets_names(132)` or higher, or the slice comes back empty.
+- Each run only writes its own dated file; nothing is written if the script is interrupted partway through, since the JSON dump happens once at the end of the loop.
+- `main.py` automatically merges every `COMMENT_RAW_*.json` file in `app/` into `COMMENT_RAW.json` on startup.
 
 ## Step 2 — Clean and preprocess comments
 
-Run:
-
 ```bash
-python scrap.py
+python3 backend/scraping.py
 ```
 
-This script reads `COMMENT_RAW.json`, removes HTML and formatting artifacts, and writes the cleaned results to `COMMENT_CLEAN.json`.
-
-Example output:
-
-```
-# of skipped_empty: 3
-# of data: 472
-```
-
----
+Reads `COMMENT_RAW.json`, strips HTML tags/entities from each comment via `cleanText()`, skips empty comments, and writes `COMMENT_CLEAN.json`.
 
 ## Step 3 — Classify comment stance
 
-Run:
+```bash
+python3 backend/stance.py
+```
+
+1. Loads the cleaned comments and the five zero-shot NLI models (`load_models()`).
+2. Builds three docket-specific candidate labels from the docket's title and abstract (Support / Oppose / Neutral).
+3. Each model independently predicts a stance per comment (`classify_stance`).
+4. The final stance is chosen by majority vote across the five models, with ties broken by summed confidence scores.
+5. `count_stance()` aggregates per-docket stance counts and buckets comments into support/oppose/neutral lists.
+
+## Step 4 — Run the web dashboard
+
+From `app/`, run:
 
 ```bash
-python classify.py
+python3 main.py
 ```
 
-*(Replace with your actual filename if different.)*
+This starts a FastAPI server on `http://localhost:8000` serving `templates/frontend.html` and an `/api/data` endpoint.
 
-The classifier performs the following steps:
+**Important:** `main.py` is started with `uvicorn.run(app, ...)` and no `--reload`, so it does **not** hot-reload. Any time `main.py` is edited, the process must be restarted (kill it and re-run `python3 main.py`) for changes to take effect.
 
-1. Loads the cleaned comments.
-2. Retrieves the docket title and abstract from Regulations.gov.
-3. Dynamically constructs three candidate labels:
+---
 
-```
-This comment supports: <docket title> - <docket summary>
+# Web Dashboard
 
-This comment opposes: <docket title> - <docket summary>
+`app/main.py` serves a single-page dashboard (`frontend.html`) with three sections:
 
-This comment is neutral regarding: <docket title> - <docket summary>
-```
+- **Overview** — docket ID, title, comment period, and abstract, plus a search box to switch between a few sample dockets.
+- **Where People Stand** — support / oppose / neutral counts.
+- **Read the Comments** — a sample of comments split into "support" and "oppose" cards.
 
-4. Loads five zero-shot Natural Language Inference (NLI) models.
-5. Each model independently predicts the comment stance.
-6. The final stance is selected using majority voting.
-7. If multiple labels receive the same number of votes, the tie is broken using the summed confidence scores.
+The page is a self-contained bundled HTML file (originally exported from a design tool) that renders itself client-side, then a small inline script fetches `/api/data` and patches the docket ID, title, abstract, stance counts, and comment lists into the page after it mounts.
 
-Example output:
+`/api/data` currently returns placeholder values (see `get_data()` in `main.py`) while the dashboard wiring is being built out. The real computation — pulling the docket's title/abstract via `fetch_docket_info` and the stance counts via `count_stance` — is written but commented out in `main.py`, pending the topic modeling / campaign detection work above it in the pipeline.
 
-```
-Loading model: facebook/bart-large-mnli
-Loading model: cross-encoder/nli-deberta-v3-large
-Loading model: MoritzLaurer/DeBERTa-v3-large-mnli-fever-anli-ling-wanli
-...
-
-Total Comments Processed: 472
-
-Stance Distribution:
-
-Support: 281
-Oppose: 165
-Neutral: 26
-```
+**Note on `frontend.html`:** most of the page's markup lives as a single very large escaped JSON string inside a `<script type="__bundler/template">` tag (a bundled/exported design artifact, not hand-authored HTML). It's easy for an editor to truncate this file when saving, since it's essentially one enormous line — if the dashboard ever starts throwing "missing bundle data" or a JSON parsing error in the browser console, check that this file hasn't been corrupted before assuming the bug is elsewhere.
 
 ---
 
@@ -226,8 +188,6 @@ The final prediction is determined by majority vote.
 
 If multiple labels receive the same number of votes, the tie is resolved using the cumulative confidence scores from all models.
 
----
-
 ## Models Used
 
 | Model | Description |
@@ -238,140 +198,66 @@ If multiple labels receive the same number of votes, the tie is resolved using t
 | `valhalla/distilbart-mnli-12-3` | Distilled BART model with faster inference and smaller memory footprint. |
 | `FacebookAI/roberta-large-mnli` | RoBERTa-large fine-tuned on MNLI. Strong encoder-based baseline. |
 
+## Accuracy check
+
+`backend/evaluate.py` runs each of the five models individually against 10 hand-labeled sample comments and prints a per-model accuracy score. This is a quick sanity check on model choice, not a substitute for validating the ensemble's actual output at scale (see the Progress checklist).
+
 ---
 
 # How It Works
 
+## `backend/dataCollection.py`
+
+- **`fetch_dockets_names(count)`** — retrieves the `count` most recently-modified docket IDs from the `/dockets` endpoint and caches them to `recentDocketIDs.json`.
+- **`fetch_comments(docket_id, max_pages)`** — retrieves comment metadata from `/comments`, paginating 25 at a time, stopping early if a page comes back empty. Waits 1.5 seconds between requests.
+- **`fetch_comments_details(comment_id)`** — retrieves the full text for a single comment via `/comments/{commentId}`. Returns an empty string on failure or if the API returns a null comment body.
+- **`fetch_docket_info(docket_id)`** — retrieves a docket's title, abstract, and last-modified date.
+
+## `backend/scraping.py`
+
+- **`jsonLoad(inputFile, outputFile)`** — loads raw comments, skips empty entries, cleans each one via `cleanText()`, and writes the result.
+- **`cleanText(text)`** — strips HTML tags, collapses whitespace, and converts/removes common HTML entities.
+
+## `backend/stance.py`
+
+- **`load_models()`** — loads all five Hugging Face zero-shot classification pipelines.
+- **`classify_stance(text, classifier)`** — truncates a comment to 512 words, runs it through all five models, and returns the majority-vote stance with vote counts and average confidence.
+- **`classify_docketID_Data(docket_id, data)`** — groups comments by docket and fetches docket info for each group.
+- **`count_stance(data, classifier, docket_info)`** — builds the docket-specific Support/Oppose/Neutral labels, classifies every comment, and returns per-stance counts plus the comments bucketed by predicted stance.
+
+## `backend/evaluate.py`
+
+- **`evaluate_model(model_name)`** — runs one model against the 10 hand-labeled samples and prints per-sample and overall accuracy.
+
 ## `main.py`
 
-### `fetch_comments(docket_id, max_pages)`
-
-Retrieves comment metadata from the Regulations.gov `/comments` endpoint.
-
-- Filters by docket ID
-- Retrieves up to `max_pages × 25` comments
-- Automatically stops when no additional pages are returned
-- Waits 1.5 seconds between API requests to respect rate limits
-
----
-
-### `fetch_comments_details(comment_id)`
-
-Retrieves the complete text for a single public comment using the `/comments/{commentId}` endpoint.
-
-Returns the comment text or an empty string if the request fails.
-
----
-
-### `fetch_docket_info(docket_id)`
-
-Retrieves the docket title and abstract.
-
-These are later used to build context-aware zero-shot classification labels.
-
----
-
-## `scrap.py`
-
-### `jsonLoad(inputFile, outputFile)`
-
-Loads the raw JSON file, removes empty entries, cleans each comment using `cleanText()`, and saves the processed comments.
-
----
-
-### `cleanText(text)`
-
-Applies the following transformations:
-
-| Step | Regex | Purpose |
-|------|-------|---------|
-| 1 | `<[^>]+>` | Remove HTML tags |
-| 2 | `\s+` | Collapse repeated whitespace |
-| 3 | `&#39;` | Convert HTML apostrophe entity |
-| 4 | `&rsquo;` | Convert quotation entity |
-| 5 | `&amp;` | Convert ampersand entity |
-| 6 | `&[a-zA-Z]+;` | Remove remaining HTML entities |
-
----
-
-## `classify.py`
-
-### `load_models()`
-
-Loads all five Hugging Face zero-shot classification models.
-
----
-
-### `classify_stance(text, classifier)`
-
-For each comment:
-
-1. Truncates the input to 512 words.
-2. Runs inference across all five models.
-3. Records each model's prediction.
-4. Performs majority voting.
-5. Resolves ties using cumulative confidence scores.
-6. Returns:
-
-- predicted stance
-- vote counts
-- average confidence
-
----
-
-# Configuration
-
-| Variable | Description | Default |
-|-----------|-------------|---------|
-| `DOCKET_ID` | Target Regulations.gov docket | `FTC-2023-0007` |
-| `OUTPUT_FILE` | Raw output JSON filename | `COMMENT_RAW.json` |
-| `max_pages` | Maximum number of pages to fetch | `20` |
-| `MODELS` | Ensemble of Hugging Face NLI models | See `classify.py` |
-| `LABELS` | Dynamically generated Support / Oppose / Neutral prompts based on the docket title and abstract | Generated automatically |
+- Merges every `COMMENT_RAW_*.json` in `app/` into `COMMENT_RAW.json` and cleans it into `COMMENT_CLEAN.json` on startup.
+- **`GET /`** — serves `templates/frontend.html`.
+- **`GET /api/data`** — returns the docket/stance/comment data the dashboard renders (currently placeholder values, see [Web Dashboard](#web-dashboard)).
 
 ---
 
 # Output
 
-## `COMMENT_RAW.json`
+## `COMMENT_RAW_<date>.json` / `COMMENT_RAW.json`
 
-Contains the raw comments.
+Raw comments from a single collection run / the merge of all runs. Each object includes:
 
-Each object includes:
-
+- `docketID`
 - `id`
 - `title`
 - `postedDate`
 - `printtext`
 
----
-
 ## `COMMENT_CLEAN.json`
 
-Contains cleaned comments.
+Cleaned comments. Each object includes:
 
-Each object includes:
-
+- `docketID`
 - `id`
 - `title`
 - `postedDate`
 - `cleaned_text`
-
----
-
-## `COMMENT_CLASSIFIED.json`
-
-Contains the final stance predictions.
-
-Each object includes:
-
-- `id`
-- `title`
-- `postedDate`
-- `cleaned_text`
-- `stance`
-- `votes`
-- `avg_confidence`
 
 ---
 
@@ -401,7 +287,7 @@ See the official Regulations.gov API documentation for details.
 
 | Docket ID | Description |
 |-----------|-------------|
-| `FTC-2023-0007` | FTC Non-Compete Rulemaking (demonstration case used in this project) |
+| `FTC-2023-0007` | FTC Non-Compete Rulemaking (primary demonstration case) |
 | `EPA-HQ-OAR-2003-0129` | EPA Air Quality Regulation |
 | `FAA-2018-1084` | FAA Aviation Regulation |
 
@@ -411,12 +297,13 @@ See the official Regulations.gov API documentation for details.
 
 Planned extensions include:
 
+- Wiring the dashboard to real computed stance data instead of placeholders
 - BERTopic / LDA topic modeling
 - Duplicate and near-duplicate detection
 - Identification of mass comment campaigns
 - Named entity extraction
 - Automated summary report generation
-- Interactive visualization dashboard
+- Persisting results in MongoDB instead of local JSON files
 
 ---
 
