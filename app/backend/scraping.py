@@ -10,8 +10,10 @@ def jsonLoad(inputFile, outputFile):
         if not d:
             skipped_empty += 1
             continue
+
         text = cleanText(d.get("printtext"))
         result.append({
+            'docketID': d['docketID'],
             'id': d['id'],
             'title': d['title'],
             'postedDate': d['postedDate'],
@@ -22,6 +24,7 @@ def jsonLoad(inputFile, outputFile):
 
     with open(outputFile,"w") as f:
         json.dump(result,f,indent=2,ensure_ascii=False)
+    return outputFile
 
 def cleanText(text):
     text = re.sub(r'<[^>]+>',' ',text)

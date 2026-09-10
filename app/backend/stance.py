@@ -1,27 +1,18 @@
 import json
 from transformers import pipeline
-from scraping import cleanText
 import os
 from dotenv import load_dotenv
 from collections import Counter
-from backend.dataCollection import fetch_docket_info
+from .dataCollection import fetch_docket_info
+
+
 
 # Load environment variables
 load_dotenv()
 
 hf_token = os.getenv("HF_TOKEN")
-docker_iinfo = fetch_docket_info('FTC-2023-0007')
-LABELS = [
-    f"This comment supports: {docker_iinfo['title']} - {docker_iinfo['dkAbstract'][:200]}", 
-    f"This comment opposes: {docker_iinfo['title']} - {docker_iinfo['dkAbstract'][:200]}", 
-    f"This comment is neutral regarding: {docker_iinfo['title']} - {docker_iinfo['dkAbstract'][:200]}"
-]
-LABLE_SHORT = {
-    LABELS[0]: "Support",
-    LABELS[1]: "Oppose",
-    LABELS[2]: "Neutral"
-}
-
+LABELS = []
+LABLE_SHORT = {}
 MODELS = [
     "facebook/bart-large-mnli",
     "cross-encoder/nli-deberta-v3-large",
@@ -54,6 +45,8 @@ def load_models():
         
     
 def classify_stance(text,classifier):
+    if not text or not text.strip():
+        return None
     t = text.split()[:512]
     t = " ".join(t)
     votes = []
@@ -79,19 +72,77 @@ def classify_stance(text,classifier):
         'avg_confidence': round(scores[top_label] / len(scores),3)        
         }
 
+def classify_docketID_Data(docket_id, data):
+    data_class = {}
+    dockers_info = {}
+    for comment in data:
+        if comment['docketID'] not in dockers_info:
+            dockers_info[comment['docketID']] = fetch_docket_info(docket_id)
+            data_class[comment['docketID']] = [comment]
+        else:
+            data_class[comment['docketID']].append(comment)
+    return data_class, dockers_info
 
+def count_stance(data, classifier,docket_info):
+    global LABELS, LABLE_SHORT
+    if isinstance(docket_info, list):
+        docket_info = docket_info[0]
+    #print(f"Counting stance for docket: {docket_info}")
+
+
+    counts = Counter()
+    result = {}
+    opposed_data = []
+    support_data = []
+    netural_data = []
+
+    LABELS =[
+        f"This comment supports: {docket_info['title']} - {docket_info.get('dkAbstract', '')[:200]}", 
+        f"This comment opposes: {docket_info['title']} - {docket_info.get('dkAbstract', '')[:200]}", 
+        f"This comment is neutral regarding: {docket_info['title']} - {docket_info.get('dkAbstract', '')[:200]}"
+    ]
+    LABLE_SHORT = {
+        LABELS[0]: "Support",
+        LABELS[1]: "Oppose",
+        LABELS[2]: "Neutral"
+    }
+
+    for comment in data:
+        #print("Processing comment ID: ", comment)
+        text = comment['cleaned_text']
+        result = classify_stance(text, classifier)
+        if result is None:
+            continue
+        counts[result['stance']] += 1
+
+        if result['stance'] == 'Support':
+            support_data.append(comment)
+        elif result['stance'] == 'Oppose':
+            opposed_data.append(comment)
+        else:
+            netural_data.append(comment)
+
+    result[id] = counts
+    return result, [support_data, opposed_data, netural_data]
 
 if __name__ =='__main__':
     result = []
     data = json.load(open('COMMENT_CLEAN.json'))
+    print(data)
     classifier = load_models()
     #text = "Pursuant to the Federal Trade Commission Act (‘‘FTC Act’’), the Federal Trade Commission (‘‘Commission’’) is issuing the Non-Compete Clause Rule (‘‘the final rule’’). The final rule provides that it is an unfair method of competition for persons to, among other things, enter into non-compete clauses (‘‘non-competes’’) with workers on or after the final rule’s effective date. With respect to existing non-competes—i.e., non-competes entered into before the effective date—the final rule adopts a different approach for senior executives than for other workers. For senior executives, existing non-competes can remain in force, while existing non-competes with other workers are not enforceable after the effective date. \n\n"
     #text = cleanText(text)
+    DOCKET_IDs = json.load(open("recentDocketIDs.json"))
+    print(f"Recent Docket IDs: {DOCKET_IDs[0]}")
+    ans = count_stance(data, classifier, DOCKET_IDs[0])
+    print(f"Stance counts for {DOCKET_IDs[0]}: {ans}")
+    '''
     count_stance = Counter()
     for d in data:
         stance_result = classify_stance(d['cleaned_text'],classifier)
         print(f"Comment ID: {d['id']}...")  
         result.append({
+            "docketID": d['docketID'],
             "id": d['id'],
             "title": d['title'],
             "postedDate": d['postedDate'],
@@ -114,6 +165,7 @@ if __name__ =='__main__':
         #print(f'Votes: {short_votes}, Avg Confidence: {stance_result["avg_confidence"]}')
     print(f'Total Comments Processed: {len(result)}')
     print(f"Stance Distribution: {count_stance}")
+    '''
 
 
                           
